@@ -1,0 +1,48 @@
+# Simulation artifacts
+*.vcd
+*.fst
+*.wdb
+*.wlf
+*.vstf
+transcript
+work/
+*.log
+*.shm/
+csrc/
+simv*
+DVEfiles/
+.fsdb_ctrl/
+
+# Quartus
+*.qpf.bak
+db/
+incremental_db/
+output_files/
+*.sof
+*.pof
+*.rpt
+*.smsg
+*.summary
+greybox_tmp/
+
+# Verilator
+obj_dir/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Misc
+*.bak
+*.orig
