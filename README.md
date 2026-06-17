@@ -1,67 +1,99 @@
-# LEGv8 Pipelined CPU
+# arm-ooo-cpu
 
-A 5-stage pipelined LEGv8 processor implemented from scratch in SystemVerilog. Supports the LEGv8 base ISA with classical in-order pipelining, hazard handling via forwarding and stalls, and a Harvard-style memory model.
+Out-of-order LEGv8 processor with split L1 caches and gshare branch prediction. SystemVerilog RTL targeting FPGA prototyping and UVM-driven verification.
 
-LEGv8 is the 64-bit ARMv8 educational subset defined in Patterson & Hennessy, *Computer Organization and Design: ARM Edition*.
+## ISA
 
-## What's Implemented
+The core implements LEGv8 — the 64-bit ARMv8 educational subset defined in Patterson & Hennessy, *Computer Organization and Design: ARM Edition*. Supported instruction classes:
 
-- **5-stage pipeline:** Fetch · Decode · Execute · Memory · Writeback
-- **Datapath:** 64-bit ALU with overflow/zero detect, 32 × 64-bit register file, sign-extension unit, shifter, branch logic
-- **Control:** Main control unit, ALU control, condition evaluation for `B.cond` branches
-- **Hazard handling:** EX/MEM and MEM/WB forwarding units, load-use stall detection
-- **Memory:** Separate instruction and data memories (Harvard-style)
-- **Tested with:** Custom LEGv8 assembly benchmarks in `sw/tests/`
+- **Arithmetic / logical**: ADD, ADDI, ADDS, ADDIS, SUB, SUBI, SUBS, SUBIS, AND, ANDI, ANDS, ORR, ORRI, EOR, EORI
+- **Memory**: LDUR, STUR
+- **Control transfer**: B, BL, BR, CBZ, B.cond
+- **Other**: LSL, LSR, MOVZ, MOVK
 
-## Architecture
+## Microarchitecture
 
-```
-IF  →  ID  →  EX  →  MEM  →  WB
-```
+### Front end
+- 64-bit byte-addressed PC, 32-bit instruction fetch
+- gshare branch predictor: global history register XORed with PC indexing into a table of 2-bit saturating counters
+- Branch target buffer for direct branch targets
+- Speculative fetch with single-cycle misprediction recovery
 
-- **IF** — Program counter + instruction memory fetch
-- **ID** — Instruction decode, register file read, sign-extension, control signal generation
-- **EX** — ALU operation, branch target calculation, condition evaluation
-- **MEM** — Data memory access for loads and stores
-- **WB** — Result writeback to register file
+### Back end
+- Out-of-order issue with register renaming
+- Reorder buffer for in-order commit
+- Issue queue feeding the integer ALU and memory pipeline
+- Load/store queue with store-to-load forwarding
+- In-order commit preserving precise architectural state
 
-Forwarding paths from the EX/MEM and MEM/WB pipeline registers resolve most data hazards. Load-use hazards trigger a single-cycle pipeline stall.
+### Memory hierarchy
+- Split L1 instruction and data caches
+- Write-back, write-allocate data cache
 
-## Repository Layout
+### Hazard handling
+- Full forwarding from EX/MEM and MEM/WB to EX
+- Write-back-to-ID forwarding for same-cycle register file reads
+- Hazard detection unit with load-use stall and branch flush
+- No architectural delay slots — all hazards resolved in hardware
+
+## Pipeline
+
+The repository contains two implementations sharing a common module library:
+
+- **In-order baseline** (`v0-baseline`, `v1-hazard-detection`): classic 5-stage IF / ID / EX / MEM / WB pipeline with forwarding and hazard detection
+- **Out-of-order core** (`v2-ooo` onward): fetch / decode-rename / dispatch / issue / execute / memory / writeback / commit
+
+
+
+## Repository layout
 
 ```
 rtl/
-├── core/      Pipeline stages, control, datapath
-├── common/    Reusable submodules (muxes, adders, decoders, flops, registers)
-└── memory/    Instruction and data memory models
-tb/            Testbenches
-sim/           Simulation scripts
-sw/            LEGv8 assembly test programs
-docs/          Diagrams, architecture notes
+  core/
+    PipelinedCPU.sv          top-level integration
+    Control.sv               main control decoder
+    BranchLogic.sv           branch resolution in ID
+    ForwardingUnit.sv        EX/MEM and MEM/WB forwarding
+    WBForwardUnit.sv         write-back to ID forwarding
+    HazardDetectionUnit.sv   load-use stall and branch flush
+    ALUControl.sv, alu.sv    integer execution
+    regfile.sv               architectural register file
+    signextend.sv, shiftLeft.sv
+    PC.sv, instructmem.sv, datamem.sv
+  common/
+    mux2to1, mux4to1, mux5_2to1, mux32_2to1, mux64_2to1, mux64_4to1
+    adder64, full_adder, register1, register5, register32, register64
+    decoder2to4, decoder3to8, decoder5to32, D_FF
+sw/
+  tests/
+    *.arm                    LEGv8 test programs in ASCII binary format
 ```
 
-## Simulating
+## Verification
 
-Built and tested in Questa on the UW Linux servers:
+- Directed assembly tests for per-instruction correctness
+- Microbenchmarks isolating each hazard mechanism: load-use stall, branch flush, combined load-into-branch
+- Reference comparison against a LEGv8 instruction set simulator
+- SystemVerilog assertions covering pipeline invariants and protocol compliance
+- UVM verification environment (separate repository) with constrained-random stimulus, scoreboard, and functional coverage
+- Formal verification of control-path properties with SymbiYosys
 
-```bash
-ssh <netid>@<uw-linux-host>
-cd arm-ooo-cpu/sim/scripts
-vsim -do runlab.do
+## Build and simulation
+
+Targets Intel Quartus Prime for synthesis on the Terasic DE1-SoC (Cyclone V). Behavioral simulation via ModelSim / Questa.
+
 ```
-
-## Toolchain
-
-- **HDL:** SystemVerilog (IEEE 1800-2017)
-- **Simulator:** Questa
-- **Waveform viewer:** Questa
-- **Target ISA:** LEGv8 (ARMv8-A subset)
+vlib work
+vlog rtl/core/*.sv rtl/common/*.sv
+vsim -c -do "run -all" PipelinedCPU_tb
+```
 
 ## References
 
-- Patterson & Hennessy, *Computer Organization and Design: ARM Edition*
-- ARM Architecture Reference Manual, ARMv8-A
+- Patterson and Hennessy, *Computer Organization and Design: ARM Edition*
+- Shen and Lipasti, *Modern Processor Design*
+- Hennessy and Patterson, *Computer Architecture: A Quantitative Approach*
 
 ## Author
 
-Sashwath Narayanan — ECE, University of Washington
+Sashwath Narayanan — University of Washington, ECE

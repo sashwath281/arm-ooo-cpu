@@ -38,8 +38,6 @@ module PipelinedCPU (clk, reset);
 
     // Pipeline helper wire
     logic pipeWriteEnable;
-
-    // Pipeline registers always write for now.
     assign pipeWriteEnable = 1'b1;
 
     // Control packing wires
@@ -105,11 +103,17 @@ module PipelinedCPU (clk, reset);
     logic MEMWB_Link;
 
 
+    // Hazard / flush control
+    logic PCWrite, IFID_Write, ControlBubble, IFID_Flush;
+    logic [31:0] IFID_instruction_in;
+    logic [31:0] IDEX_control_raw;
+
+
 
     // PHASE -1 
 
     // PC
-    PC programCounter (.clk(clk), .reset(reset), .next_pc(next_pc), .pc(pc));
+    PC programCounter (.clk(clk), .reset(reset), .writeEnable(PCWrite), .next_pc(next_pc), .pc(pc));
     adder64 pcAdder (.sum(pcplus4),.cout(pcAdder_cout), .carry(pcAdder_carry), .a(pc), .b(64'd4), .cin(1'b0));
 
 
@@ -122,22 +126,26 @@ module PipelinedCPU (clk, reset);
     register64 IFID_pc_reg (
         .q(IFID_pc),
         .d(pc),
-        .writeEnable(pipeWriteEnable),
+        .writeEnable(IFID_Write),
         .clk(clk)
     );
 
     register64 IFID_pcplus4_reg (
         .q(IFID_pcplus4),
         .d(pcplus4),
-        .writeEnable(pipeWriteEnable),
+        .writeEnable(IFID_Write),
         .clk(clk)
     );
 
     
+    mux32_2to1 ifid_flush_mux (.a(instruction), .b(32'b0),
+                               .sel(IFID_Flush), .out(IFID_instruction_in));
+
+
     register32 IFID_instruction_reg (
         .q(IFID_instruction),
-        .d(instruction),
-        .writeEnable(pipeWriteEnable),
+        .d(IFID_instruction_in),
+        .writeEnable(IFID_Write),
         .clk(clk),
         .reset(reset)
     );
@@ -151,6 +159,13 @@ module PipelinedCPU (clk, reset);
                      .BranchCond(BranchCond), .FlagSet(FlagSet), .BranchReg(BranchReg),
                      .Link(Link), .ALUOp(ALUOp), .ImmSel(ImmSel), .Reg2Loc(Reg2Loc));
     
+
+    // Hazard Detection Unit
+    HazardDetectionUnit hazardUnit (.IDEX_MemRead (IDEX_MemRead), .IDEX_write_reg (IDEX_write_reg),
+                                    .IFID_read_reg1 (IFID_instruction[9:5]), .IFID_read_reg2 (IFID_instruction[20:16]),
+                                    .branch_taken (branch_taken), .PCWrite (PCWrite), .IFID_Write (IFID_Write),
+                                    .ControlBubble (ControlBubble), .IFID_Flush (IFID_Flush));
+
 
     // Reg2Loc Mux
     mux5_2to1 reg2Loc_mux (.a(IFID_instruction[20:16]), .b(IFID_instruction[4:0]), .sel(Reg2Loc), .out(read_reg2));
@@ -462,16 +477,20 @@ module PipelinedCPU (clk, reset);
 
 
     // ID/EX control signal packing
-    assign IDEX_control_in32[0] = RegWrite;
-    assign IDEX_control_in32[1] = ALUSrc;
-    assign IDEX_control_in32[2] = MemWrite;
-    assign IDEX_control_in32[3] = MemRead;
-    assign IDEX_control_in32[4] = MemToReg;
-    assign IDEX_control_in32[5] = FlagSet;
-    assign IDEX_control_in32[6] = Link;
-    assign IDEX_control_in32[8:7] = ALUOp;
-    assign IDEX_control_in32[10:9] = ImmSel;
-    assign IDEX_control_in32[31:11] = 21'd0;
+    assign IDEX_control_raw[0] = RegWrite;
+    assign IDEX_control_raw[1] = ALUSrc;
+    assign IDEX_control_raw[2] = MemWrite;
+    assign IDEX_control_raw[3] = MemRead;
+    assign IDEX_control_raw[4] = MemToReg;
+    assign IDEX_control_raw[5] = FlagSet;
+    assign IDEX_control_raw[6] = Link;
+    assign IDEX_control_raw[8:7] = ALUOp;
+    assign IDEX_control_raw[10:9] = ImmSel;
+    assign IDEX_control_raw[31:11] = 21'd0;
+
+    // Bubble: zero out control signals on load-use stall (NOP into EX)
+    mux32_2to1 control_bubble_mux (.a(IDEX_control_raw), .b(32'b0),
+                                   .sel(ControlBubble), .out(IDEX_control_in32));
 
     assign IDEX_RegWrite = IDEX_control_out32[0];
     assign IDEX_ALUSrc = IDEX_control_out32[1];
