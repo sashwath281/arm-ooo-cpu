@@ -1,3 +1,5 @@
+`timescale 1ps/1ps
+
 module btb(clk, reset, predict_pc, btb_hit, predict_target, update_valid, update_pc, update_target);
     input  logic clk;
     input  logic reset;
@@ -35,7 +37,7 @@ module btb(clk, reset, predict_pc, btb_hit, predict_target, update_valid, update
     assign update_index = update_pc[7:2];
     assign update_tag   = update_pc[63:8];
 
-    always_ff @(posedge clk or negedge reset) begin
+    always_ff @(posedge clk or posedge reset) begin
         if (!reset) begin
             for (int i = 0; i < 64; i++) begin
                 valid_array[i]  <= 1'b0;

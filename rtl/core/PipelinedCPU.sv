@@ -14,6 +14,7 @@ module PipelinedCPU (clk, reset);
     logic negative, zero, overflow, carryout;
     logic [63:0] immExt, immShifted; 
     logic branch_taken;
+    logic [63:0] branchlogic_next_pc;
 
     // Control Signals
     logic Reg2Loc, RegWrite, ALUSrc, MemWrite, MemRead, MemToReg, BranchUncond, BranchCond, FlagSet, 
@@ -39,6 +40,26 @@ module PipelinedCPU (clk, reset);
     // Pipeline helper wire
     logic pipeWriteEnable;
     assign pipeWriteEnable = 1'b1;
+
+    // Branch prediction — IF stage
+    logic predict_taken_if;
+    logic btb_hit;
+    logic [63:0] predict_target_if;
+    logic [7:0] predict_bhr_snapshot;
+
+    // Carried through IF/ID
+    logic IFID_predict_taken;
+    logic [63:0] IFID_predict_target;
+    logic [7:0] IFID_bhr_snapshot;
+
+    // Computed in ID
+    logic mispredict;
+    logic [63:0] branch_target_actual;
+    logic take_prediction_if;
+    logic IFID_Flush_unused;
+
+    logic [63:0] predicted_next_pc;
+    logic [63:0] corrected_next_pc;
 
     // Control packing wires
     logic [31:0] IDEX_control_in32;
@@ -119,7 +140,20 @@ module PipelinedCPU (clk, reset);
 
     // Instruction Memory
     instructmem instructionMemory (.address(pc), .instruction(instruction), .clk(clk));
+
+
+    // gshare - direction predictor
+    gshare branch_predictor (.clk(clk), .reset(reset), .predict_pc(pc), .predict_taken(predict_taken_if), .predict_bhr_snapshot(predict_bhr_snapshot),
+                             .update_valid(gshare_update_valid), .update_pc(IFID_pc), .update_bhr(IFID_bhr_snapshot), .update_taken(branch_taken));
     
+    
+    // BTB - target predictor
+    btb branch_target_buffer (.clk(clk), .reset(reset), .predict_pc(pc), .btb_hit(btb_hit), .predict_target(predict_target_if),
+                              .update_valid(btb_update_valid), .update_pc(IFID_pc), .update_target(branch_target_actual)); 
+    
+    assign take_prediction_if = btb_hit & predict_taken_if;
+    mux64_2to1 predicted_pc_mux (.a(pcplus4), .b(predict_target_if), .sel(take_prediction_if), .out(predicted_next_pc));
+
     
     // IF/ID Pipeline Registers
 
@@ -151,6 +185,30 @@ module PipelinedCPU (clk, reset);
     );
 
 
+    register1 IFID_predict_taken_reg (
+        .q(IFID_predict_taken),
+        .d(take_prediction_if),
+        .writeEnable(IFID_Write),
+        .clk(clk),
+        .reset(reset)
+    );
+
+    register64 IFID_predict_target_reg (
+        .q(IFID_predict_target),
+        .d(predict_target_if),
+        .writeEnable(IFID_Write),
+        .clk(clk)
+    );
+
+    register8 IFID_bhr_snapshot_reg (
+        .q(IFID_bhr_snapshot),
+        .d(predict_bhr_snapshot),
+        .writeEnable(IFID_Write),
+        .clk(clk),
+        .reset(reset)
+    );
+
+
     // PHASE -2
 
     // Control
@@ -160,11 +218,12 @@ module PipelinedCPU (clk, reset);
                      .Link(Link), .ALUOp(ALUOp), .ImmSel(ImmSel), .Reg2Loc(Reg2Loc));
     
 
+    
     // Hazard Detection Unit
     HazardDetectionUnit hazardUnit (.IDEX_MemRead (IDEX_MemRead), .IDEX_write_reg (IDEX_write_reg),
                                     .IFID_read_reg1 (IFID_instruction[9:5]), .IFID_read_reg2 (IFID_instruction[20:16]),
                                     .branch_taken (branch_taken), .PCWrite (PCWrite), .IFID_Write (IFID_Write),
-                                    .ControlBubble (ControlBubble), .IFID_Flush (IFID_Flush));
+                                    .ControlBubble (ControlBubble), .IFID_Flush (IFID_Flush_unused));
 
 
     // Reg2Loc Mux
@@ -225,9 +284,32 @@ module PipelinedCPU (clk, reset);
                              .BranchCond(BranchCond), .BranchReg(BranchReg),
                              .savedNegative(forwardNeg), .savedOverflow(forwardOver),
                              .pc(IFID_pc), .branchImm(immShifted), .RegisterData1(RegisterData1),
-                             .RegisterData2(cbzRegisterData2), .pcplus4(pcplus4), .next_pc(next_pc),
+                             .RegisterData2(cbzRegisterData2), .pcplus4(pcplus4), .next_pc(branchlogic_next_pc),
                              .branch_taken(branch_taken));
     
+    
+    logic [63:0] pc_plus_imm;
+    assign pc_plus_imm = IFID_pc + immShifted;
+
+    mux64_2to1 branch_target_mux(.a(pc_plus_imm), .b(RegisterData1), .sel(BranchReg), .out(branch_target_actual));
+
+    logic is_branch_in_id;
+    assign is_branch_in_id = BranchUncond | BranchCond | BranchReg;
+
+    mux64_2to1 corrected_pc_mux(.a(IFID_pcplus4), .b(branch_target_actual), .sel(branch_taken), .out(corrected_next_pc));
+
+
+    assign mispredict = is_branch_in_id &&((branch_taken != IFID_predict_taken) || (branch_taken && IFID_predict_taken && (branch_target_actual != IFID_predict_target)));
+    assign IFID_Flush = mispredict;
+
+    mux64_2to1 final_pc_mux(.a(predicted_next_pc), .b(corrected_next_pc), .sel(mispredict), .out(next_pc));
+
+
+    logic gshare_update_valid;
+    logic btb_update_valid;
+
+    assign gshare_update_valid = is_branch_in_id && BranchCond;   // conditional branches only
+    assign btb_update_valid    = is_branch_in_id && branch_taken; // taken branches only
     
     // ID/EX Pipeline Registers
 
@@ -529,6 +611,7 @@ module PipelinedCPU (clk, reset);
     assign MEMWB_RegWrite = MEMWB_control_out32[0];
     assign MEMWB_MemToReg = MEMWB_control_out32[1];
     assign MEMWB_Link = MEMWB_control_out32[2];
+
 
 
 endmodule

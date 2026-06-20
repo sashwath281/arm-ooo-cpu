@@ -1,7 +1,9 @@
-module gshare(clk, reset, predict_pcl, predict_taken, predict_bhr_snapshot, update_valid, update_pc, update_bhr, update_taken);
+`timescale 1ps/1ps
+
+module gshare(clk, reset, predict_pc, predict_taken, predict_bhr_snapshot, update_valid, update_pc, update_bhr, update_taken);
     
     input logic clk;
-    input logic reset; // active-low
+    input logic reset;
 
     // Predict interface - used in IF stage every cycle
     input logic [63:0] predict_pc;                      // current fetch instruction
@@ -32,13 +34,15 @@ module gshare(clk, reset, predict_pcl, predict_taken, predict_bhr_snapshot, upda
     logic [7:0] update_index;
     assign update_index = update_pc[9:2] ^ update_bhr;
 
-    always_ff @(posedge clk or negedge reset) begin
-        if (!reset) begin
-            
-            // Reset: all counters weakly NT, clear BHR
-            for (int i = 0; i < 256; i++)
-                pht[i] <= 2'b01;
-            bhr <= 8'0;
+    integer i;
+    initial begin
+        for (i = 0; i < 256; i++)
+            pht[i] = 2'b01;
+    end
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            bhr <= 8'b0;
         end
 
         else if (update_valid) begin

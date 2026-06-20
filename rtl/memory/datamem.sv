@@ -4,7 +4,7 @@
 // Size is the number of bytes to transfer, and memory supports any power of 2 access size up to double-word.
 // However, all accesses must be aligned.  So, the address of any access of size S must be a multiple of S.
 
-`timescale 1ns/10ps
+`timescale 1ps/1ps
 
 // How many bytes are in our memory?  Must be a power of two.
 `define DATA_MEM_SIZE		1024

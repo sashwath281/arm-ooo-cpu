@@ -1,17 +1,17 @@
 `timescale 1ps/1ps
 
-module register5 (q, d, writeEnable, clk, reset);
-	output logic [4:0] q;
-	input logic [4:0] d;
+module register8 (q, d, writeEnable, clk, reset);
+	output logic [7:0] q;
+	input logic [7:0] d;
 	input logic clk, writeEnable, reset;
 	
 	// drives d-input of flip-flops. 
-	logic [4:0] dIn;
+	logic [7:0] dIn;
 	
 	genvar i; 
 	
 	generate
-		for(i = 0; i < 5; i++) begin: bits
+		for(i = 0; i < 7; i++) begin: bits
 			
 			logic notEn, load, hold; 
 			
