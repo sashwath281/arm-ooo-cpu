@@ -61,6 +61,23 @@ module PipelinedCPU (clk, reset);
     logic [63:0] predicted_next_pc;
     logic [63:0] corrected_next_pc;
 
+
+    // I-Cache signals
+    logic icache_ready;
+    logic [31:0] icache_instruction;
+    logic icache_mem_req;
+    logic [63:0] icache_mem_addr;
+    logic icache_mem_resp_valid;
+    logic [255:0] icache_mem_resp_data;
+
+
+    // Stall pipeline on cache miss
+    logic PCWrite_hdu, IFID_Write_hdu;
+
+    assign PCWrite   = PCWrite_hdu && icache_ready;
+    assign IFID_Write = IFID_Write_hdu && icache_ready;
+
+
     // Control packing wires
     logic [31:0] IDEX_control_in32;
     logic [31:0] IDEX_control_out32;
@@ -139,8 +156,13 @@ module PipelinedCPU (clk, reset);
 
 
     // Instruction Memory
-    instructmem instructionMemory (.address(pc), .instruction(instruction), .clk(clk));
+    icache instruction_cache (.clk(clk), .reset(reset), .pc(pc), .valid(1'b1), .instruction(instruction),
+                              .ready(icache_ready), .mem_req(icache_mem_req), .mem_addr(icache_mem_addr),
+                              .mem_resp_valid(icache_mem_resp_valid), .mem_resp_data(icache_mem_resp_data));
+    
 
+    mem_backend imem_backend (.clk(clk), .reset(reset), .req_valid(icache_mem_req), .req_addr(icache_mem_addr),
+                              .resp_valid(icache_mem_resp_valid), .resp_data(icache_mem_resp_data));
 
     // gshare - direction predictor
     gshare branch_predictor (.clk(clk), .reset(reset), .predict_pc(pc), .predict_taken(predict_taken_if), .predict_bhr_snapshot(predict_bhr_snapshot),
@@ -222,7 +244,7 @@ module PipelinedCPU (clk, reset);
     // Hazard Detection Unit
     HazardDetectionUnit hazardUnit (.IDEX_MemRead (IDEX_MemRead), .IDEX_write_reg (IDEX_write_reg),
                                     .IFID_read_reg1 (IFID_instruction[9:5]), .IFID_read_reg2 (IFID_instruction[20:16]),
-                                    .branch_taken (branch_taken), .PCWrite (PCWrite), .IFID_Write (IFID_Write),
+                                    .branch_taken (branch_taken), .PCWrite (PCWrite_HDU), .IFID_Write (IFID_Write_HDU),
                                     .ControlBubble (ControlBubble), .IFID_Flush (IFID_Flush_unused));
 
 

@@ -19,17 +19,16 @@ module icache (clk, reset, pc, valid, instruction, ready, mem_req, mem_addr, mem
     input  logic [255:0] mem_resp_data;
 
 
-    //  [63:12] tag       (52 bits)
-    //  [11:5]  index     (7 bits → 2^7 lines)
-    //  [4:2]   word_sel  (3 bits → 2^3 words per block)
-    //  [1:0]   byte_off  (ignored, word-aligned)
-
+    // [63:12] tag (52 bits)
+    // [11:5] index (7 bits - 2^7 lines)
+    // [4:2] word_sel (3 bits - 2^3 words per block)
+    // [1:0] byte_off (word-aligned)
     logic [51:0] tag;
     logic [6:0]  index;
     logic [2:0]  word_sel;
 
-    assign tag      = pc[63:12];
-    assign index    = pc[11:5];
+    assign tag = pc[63:12];
+    assign index = pc[11:5];
     assign word_sel = pc[4:2];
 
     // Storage
