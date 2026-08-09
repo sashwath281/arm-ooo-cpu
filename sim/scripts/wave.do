@@ -1,0 +1,12 @@
+add wave /cpu_testbench/clk
+add wave /cpu_testbench/reset
+add wave /cpu_testbench/dut/pc
+add wave /cpu_testbench/dut/instruction
+add wave /cpu_testbench/dut/savedNegative
+add wave /cpu_testbench/dut/savedOverflow
+add wave /cpu_testbench/dut/aluResult
+add wave /cpu_testbench/dut/next_pc
+add wave /cpu_testbench/dut/BranchUncond
+add wave /cpu_testbench/dut/BranchCond
+add wave /cpu_testbench/dut/registerFile/registerOut
+add wave /cpu_testbench/dut/dataMemory/mem

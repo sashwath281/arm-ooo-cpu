@@ -1,0 +1,18 @@
+# ModelSim
+work/
+transcript
+*.wlf
+*.log
+*.mti
+
+# macOS
+.DS_Store
+._*
+
+# Windows
+*.lnk
+
+# Editor
+*.swp
+.vscode/
+.idea/
