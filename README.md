@@ -64,49 +64,41 @@ Measured on directed test programs:
 - Single-cycle branch prediction path
 - X31 (XZR) protection from renaming
 
-## Known Limitations (v1.0)
+## Known Limitations
 
-- **D-Cache not implemented**: The load queue currently returns a placeholder value since the D-Cache is not yet built. Adding it requires a write-back or write-through D-Cache module and an arbiter between the LQ read path and SQ drain path. Currently the OoO engine can be exercised for arithmetic, register renaming, and control flow, but not for real memory operations.
+- **D-Cache not implemented**: Loads return a placeholder value. Building the D-Cache and an arbiter between the LQ read and SQ drain paths is the next thing on the list.
 
-- **NZCV flag renaming not implemented**: B.LT depends on flags from a preceding ADDS/SUBS. The current implementation uses the branch instruction's own ALU output rather than renamed prior flags. Adding NZCV as a separately-renamed architectural resource would fix this.
+- **NZCV flag renaming not implemented**: The current implementation uses the branch instruction's own ALU output rather than renamed prior flags. Adding NZCV as a separately-renamed architectural resource would fix this.
 
-- **Complex branch recovery edge case**: Some CBZ/B sequences trigger a bug in the recovery unit's redirect PC path. Root cause isolated but not resolved.
+- **Complex branch recovery edge case**: some CBZ/B sequences trigger a bug in the recovery unit's redirect PC path. Isolated, not yet fixed.
 
-- **BL (Branch-and-Link) disabled**: Return address (PC+4) not wired through rename pipeline. Adding BL requires plumbing the link register through the rename stage.
+- **BL (Branch-and-Link) disabled**: Return address (PC+4) isn't wired through the rename pipeline yet.
 
-## Roadmap (v2.0)
+## Roadmap
 
-The following work is planned over the coming weeks:
-
-**Immediate:**
+Next up:
 - Fix the branch recovery redirect PC bug
-- Integrate D-Cache with arbiter mux for LQ read and SQ drain paths
-- Add NZCV condition flags as a renamed architectural resource
+- Build the D-Cache and arbiter mux for LQ read vs SQ drain
+- Add NZCV renaming so B.LT works
 
-**UVM verification environment:**
-- Build a proper UVM testbench with agents, sequences, and scoreboard
-- Add SystemVerilog Assertions covering pipeline invariants
-- Implement functional coverage for OoO scheduling scenarios
+UVM env:
+- Full UVM testbench with agents, sequences, scoreboard
+- SVA covering pipeline invariants
+- Functional coverage for OoO scheduling scenarios
 - Automated regression suite
 
-**FPGA synthesis:**
-- Vivado synthesis targeting Xilinx Artix-7
-- Characterize maximum clock frequency
-- Identify and analyze critical path (expected: RAT read - PRF address decode - ALU output)
+Vivado synth:
+- Target Xilinx Artix-7
+- Characterize Fmax
+- Analyze critical path (expected through RAT read - PRF address - ALU output)
 
-**Extensions:**
+Later:
 - 2-issue OoO with dual CDBs
-- L2 shared cache with real DRAM model
+- L2 cache with real DRAM model
 - Extend to full AArch64 ISA
 
 ## Building / Running
 
-
-## References
-
-- Patterson and Hennessy, *Computer Organization and Design: ARM Edition*
-- Shen and Lipasti, *Modern Processor Design*
-- Hennessy and Patterson, *Computer Architecture: A Quantitative Approach*
 
 ## Author
 
