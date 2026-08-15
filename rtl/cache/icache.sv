@@ -24,8 +24,8 @@ module icache (clk, reset, pc, valid, instruction, ready, mem_req, mem_addr, mem
     // [4:2] word_sel (3 bits - 2^3 words per block)
     // [1:0] byte_off (word-aligned)
     logic [51:0] tag;
-    logic [6:0]  index;
-    logic [2:0]  word_sel;
+    logic [6:0] index;
+    logic [2:0] word_sel;
 
     assign tag = pc[63:12];
     assign index = pc[11:5];
@@ -102,8 +102,8 @@ module icache (clk, reset, pc, valid, instruction, ready, mem_req, mem_addr, mem
     // Cache fill on memory response
     always_ff @(posedge clk) begin
         if (state == FILL) begin
-            data_array[index]  <= mem_resp_data;
-            tag_array[index]   <= tag;
+            data_array[index] <= mem_resp_data;
+            tag_array[index] <= tag;
             valid_array[index] <= 1'b1;
         end
     end
