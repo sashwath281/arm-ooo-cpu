@@ -35,14 +35,11 @@ module gshare(clk, reset, predict_pc, predict_taken, predict_bhr_snapshot, updat
     assign update_index = update_pc[9:2] ^ update_bhr;
 
     integer i;
-    initial begin
-        for (i = 0; i < 256; i++)
-            pht[i] = 2'b01;
-    end
-
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             bhr <= 8'b0;
+            for (i = 0; i <256; i++)
+                pht[i] <= 2'b01;
         end
 
         else if (update_valid) begin

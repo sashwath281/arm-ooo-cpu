@@ -16,11 +16,24 @@ module mem_backend (
 
     // Load test program
     // Zero everything out. If only X instructions then rest 1024-X instructions must be 0. (or X)
+    // initial begin
+    //      for (int i = 0; i < 1024; i++)
+    //          mem[i] = 32'b0;
+    //      $readmemb("sw/tests/test01_AddiB.arm", mem);        // Loads binary text file
+    // end
+
+    // Using plausargs to allow user to specify program file on command line.  If not specified, default to whatever we want (benchmarks)
+    string program_file; 
     initial begin
-        for (int i = 0; i < 1024; i++)
-            mem[i] = 32'b0;
-        $readmemb("sw/tests/test01_AddiB.arm", mem);        // Loads binary text file
+        for(int i = 0; i < 1024; i++)
+            mem[i] = 32'b0; 
+        
+        if($value$plusargs("PROGRAM=%s", program_file))    // Built-in SV task
+            $readmemb(program_file, mem);
+        else
+            $readmemb("sw/tests/test01_AddiB.arm", mem);
     end
+
 
     // 10-cycle latency FSM
     logic [3:0] counter;        // counts cycle since request came in

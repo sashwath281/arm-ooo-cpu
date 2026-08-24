@@ -100,19 +100,17 @@ module icache (clk, reset, pc, valid, instruction, ready, mem_req, mem_addr, mem
     assign mem_addr = {pc[63:5], 5'b0};   // block-aligned address
 
     // Cache fill on memory response
-    always_ff @(posedge clk) begin
-        if (state == FILL) begin
-            data_array[index] <= mem_resp_data;
-            tag_array[index] <= tag;
+    integer i;
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            for (i = 0; i < 128; i++)
+                valid_array[i] <= 1'b0;
+        end
+        else if (state == FILL) begin
+            data_array[index]  <= mem_resp_data;
+            tag_array[index]   <= tag;
             valid_array[index] <= 1'b1;
         end
-    end
-
-    // init valid array
-    integer i;
-    initial begin
-        for (i = 0; i < 128; i++)
-            valid_array[i] = 1'b0;
     end
 
 endmodule

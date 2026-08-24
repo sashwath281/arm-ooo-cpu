@@ -8,7 +8,7 @@ module loadQueue (
     input logic dispatch_valid,             
     output logic [3:0] dispatch_lq_idx,         // slot assigned out of the 16
     output logic full,                          // the LQ full?
-    input logic [5:0] dispatch_phys_dest,       // Identity token from Rename
+    input logic [5:0] dispatch_dest,       // Identity token from Rename
     input logic [4:0] dispatch_rob_idx,  
     output logic [5:0] result_phys_dest,        // To CDB Arbiter
     output logic [4:0] result_rob_idx,      
@@ -101,7 +101,7 @@ module loadQueue (
             // Dispatch - allocate entry at tail
             if (dispatch_valid && !full) begin
                 entries[tail].valid <= 1'b1;
-                entries[tail].phys_dest <= dispatch_phys_dest;
+                entries[tail].phys_dest <= dispatch_dest;
                 entries[tail].rob_idx <= dispatch_rob_idx; 
                 entries[tail].addr_valid <= 1'b0;
                 entries[tail].completed <= 1'b0;

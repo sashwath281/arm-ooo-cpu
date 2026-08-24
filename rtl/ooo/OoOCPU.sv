@@ -11,6 +11,11 @@ module OoOCPU (clk, reset);
     logic PCWrite, IFID_Write, IFID_Flush;
     logic [31:0] IFID_instruction_in;
     
+    // Forward declarations for signals used before their real declaration
+    logic rename_stall;
+    logic dispatch_stall;
+    logic recovery_flush_reg;
+    logic uncond_branch_in_decode;
 
     PC programCounter (.clk(clk), .reset(reset), .writeEnable(PCWrite),
                        .next_pc(next_pc), .pc(pc));
@@ -249,7 +254,7 @@ module OoOCPU (clk, reset);
         .decode_load(decode_load),
         .decode_store(decode_store),
         .decode_immediate(decode_immediate),
-        .decode_use_imm(decode_imm),
+        .decode_imm(decode_imm),
         .decode_uncondBranch(decode_uncondBranch),
         .decode_condBranch(decode_condBranch),
         .decode_branchTarget(decode_branchTarget),
