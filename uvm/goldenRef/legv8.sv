@@ -1,18 +1,17 @@
 `timescale 1ps/1ps
 
 
-// legv8_iss — LEGv8 Instruction Set Simulator (Golden Reference)
+// legv8_iss — LEGv8 Instruction Set (Golden Reference)
 // Models ONLY the instructions
 // ADDI, ADDS, SUBS, CBZ, B
 //
-// NOT modeled (matches known CPU RTL gaps):
-//   ADD/SUB (non-S variants — RegWrite never fires for these)
-//   AND/ORR (RegWrite never fires for these either)
+// NOT modeled:
+//   ADD/SUB/AND/ORR (RegWrite never fires for these)
 //   LDUR/STUR (no D-Cache yet)
 //   BL/BR (BL disabled in decode)
 //   B.LT (NZCV renaming not implemented)
 
-module legv8_iss #(parameter string PROGRAM_FILE = "sw/tests/test01_AddiB.arm")(
+module legv8 #(parameter string PROGRAM_FILE = "sw/tests/test01_AddiB.arm")(
     input logic clk,
     input logic reset,
     input logic step,
@@ -38,9 +37,10 @@ module legv8_iss #(parameter string PROGRAM_FILE = "sw/tests/test01_AddiB.arm")(
     end
 
     logic [63:0] regfile [0:31];             // X0-X30, X31 = XZR
-    logic [63:0] pc;
+    logic [63:0] pc;                         // independent program counter to see where the iss itself is currently in execution
 
 
+    // Reset block 
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             pc <= 64'd0;
@@ -52,16 +52,20 @@ module legv8_iss #(parameter string PROGRAM_FILE = "sw/tests/test01_AddiB.arm")(
         end
     end
 
-    // Decode fields
+    // This is how we handle decode stage in golden model
+    // Since its fully sequential we directly match the required information
     logic [31:0] instruction;
     logic [10:0] op11;
     logic [9:0] op10;
     logic [7:0] op8;
     logic [5:0] op6;
+
     logic [4:0] rd, rn, rm;
+
     logic [11:0] imm12;
     logic [18:0] imm19;
     logic [25:0] imm26;
+
     logic [63:0] zero_ext_imm12, sign_ext_imm19, sign_ext_imm26;
 
 
@@ -78,8 +82,8 @@ module legv8_iss #(parameter string PROGRAM_FILE = "sw/tests/test01_AddiB.arm")(
     assign imm26 = instruction[25:0];
 
     assign zero_ext_imm12 = {52'b0, imm12};                     // ADDI imm is unsigned
-    assign sign_ext_imm19 = {{43{imm19[18]}}, imm19, 2'b00};    // CBZ offset, shifted by 2
-    assign sign_ext_imm26 = {{38{imm26[25]}}, imm26, 2'b00};    // B offset, shifted by 2
+    assign sign_ext_imm19 = {{43{imm19[18]}}, imm19, 2'b00};    // CBZ offset, shifted by 2 for multiplying by 4
+    assign sign_ext_imm26 = {{38{imm26[25]}}, imm26, 2'b00};    // B offset, shifted by 2 for multiplying by 4
 
 
     function automatic logic [63:0] read_reg(logic [4:0] r);
@@ -88,6 +92,7 @@ module legv8_iss #(parameter string PROGRAM_FILE = "sw/tests/test01_AddiB.arm")(
         
         return regfile[r];
     endfunction
+
 
     always_ff @(posedge clk) begin
         committedValid <= 1'b0;

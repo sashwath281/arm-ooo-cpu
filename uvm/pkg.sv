@@ -24,5 +24,7 @@ package pkg;
     `include "smoke_test.sv"
     `include "soak_test.sv"
     `include "branch_test.sv"
+    `include "random_inst_item.sv"
+    `include "random_sequence.sv"
 
 endpackage

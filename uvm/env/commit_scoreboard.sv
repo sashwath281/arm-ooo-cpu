@@ -30,7 +30,7 @@ class commit_scoreboard extends uvm_component;
         match_count = 0;
         mismatch_count = 0;
         total_compared = 0;
-    endfunction
+    endfunction 
 
     // Called automatically when CPU monitor broadcasts
     virtual function void write_cpu(commit_item t);

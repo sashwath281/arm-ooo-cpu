@@ -8,9 +8,9 @@ class iss_monitor extends uvm_monitor;
 
     `uvm_component_utils(iss_monitor)
 
-    virtual iss_if vif;
-    uvm_analysis_port #(iss_item) ap;
-    int commit_count;
+    virtual iss_if vif;                 // call the interface
+    uvm_analysis_port #(iss_item) ap;   // the analysis port 
+    int commit_count;                   // no of commits
 
     function new(string name, uvm_component parent);
         super.new(name, parent);

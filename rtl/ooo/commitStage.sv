@@ -31,7 +31,7 @@ module commitStage (
 
 
     // Free old physical register
-    assign free_valid = rob_commit_valid;
+    assign free_valid = rob_commit_valid && (rob_commit_old != 6'd0);
     assign free_preg = rob_commit_old;
 
 

@@ -63,7 +63,7 @@ module tb_top;
     assign cif.robEmpty = 1'b0;
     assign cif.robFull = 1'b0;
 
-    legv8_iss #(.PROGRAM_FILE("sw/tests/test01_AddiB.arm")) iss(
+    legv8 #(.PROGRAM_FILE("sw/tests/test01_AddiB.arm")) iss(
         .clk(clock),
         .reset(reset),
         .step(1'b1),
