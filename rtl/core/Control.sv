@@ -78,12 +78,19 @@ module Control(instruction, ALUSrc, RegWrite, MemRead, MemWrite, Reg2Loc, ALUOp,
 
 
     // (ALUOp = 10) ADD, SUB
-    assign ALUOp[1] = ((op11 == 11'b10101011000) | (op11 == 11'b11101011000)); 
+    // (ALUOp = 01) B, BL, CBZ, B.LT
+    always_comb begin
+        ALUOp = 2'b00;   // default = ADD
 
+        if (op11 == 11'b11101011000)
+            ALUOp = 2'b01;   // SUBS
 
-    // (ALUOp = 01) B, BL, CBZ, B.LT 
-    assign ALUOp[0] = (op6  == 6'b000101) | (op6  == 6'b100101) | (op8  == 8'b10110100)
-                      | (op8  == 8'b01010100);
+        else if (op11 == 11'b10001010000)
+            ALUOp = 2'b10;   // AND
+
+        else if (op11 == 11'b10101010000)
+            ALUOp = 2'b11;   // ORR
+    end
 
     // B/BL (10) and CBZ/B.LT (11)
     assign ImmSel[1] = (op6  == 6'b000101) | (op6  == 6'b100101) | (op8  == 8'b10110100)

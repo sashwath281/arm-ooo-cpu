@@ -3,28 +3,13 @@
 module OoOCPU (clk, reset);
     input logic clk, reset;
 
-//  PHASE 1 — FETCH (unchanged from PipelinedCPU)
 
     logic [63:0] pc, pcplus4, next_pc;
     logic pcAdder_cout;
     logic [63:0] pcAdder_carry;
-    logic PCWrite, IFID_Write, IFID_Flush;
+    logic PCWrite, IFID_Write, IFID_Flush, IFID_RegWrite;
     logic [31:0] IFID_instruction_in;
     
-    // Forward declarations for signals used before their real declaration
-    logic rename_stall;
-    logic dispatch_stall;
-    logic recovery_flush_reg;
-    logic uncond_branch_in_decode;
-
-    PC programCounter (.clk(clk), .reset(reset), .writeEnable(PCWrite),
-                       .next_pc(next_pc), .pc(pc));
-
-    // Computes PC+4 (the default next PC)
-    adder64 pcAdder (.sum(pcplus4), .cout(pcAdder_cout), .carry(pcAdder_carry),     // pcAdder_cout and pcAdder_carry are unused
-                     .a(pc), .b(64'd4), .cin(1'b0));
-    
-
     // I-Cache signals
     logic [31:0] instruction;               // Instruction from cache.
     logic icache_ready;                     // The stall or go signal from I-Cache
@@ -34,21 +19,7 @@ module OoOCPU (clk, reset);
     logic icache_mem_resp_valid;            // Response from memory backend (Valid)
     logic [255:0] icache_mem_resp_data;     // Incoming 256-bit block
 
-    icache instructionCache (.clk(clk), .reset(reset), .pc(pc), .valid(1'b1),       // Valid is always 1 as the cache always servives requests in our CPU
-                             .instruction(instruction), .ready(icache_ready),
-                             .mem_req(icache_mem_req), .mem_addr(icache_mem_addr),
-                             .mem_resp_valid(icache_mem_resp_valid),
-                             .mem_resp_data(icache_mem_resp_data));
-
-    // The fake DRAM backend for the I-Cache
-    // I-Cache misses, asserts mem_req, mem_backend counts 10 cycles, responds, I-Cache fills and process repeats
-    mem_backend imemBackend (.clk(clk), .reset(reset),.req_valid(icache_mem_req),
-                              .req_addr(icache_mem_addr),.resp_valid(icache_mem_resp_valid),
-                              .resp_data(icache_mem_resp_data));
-
-
     // Branch Predictor
-
     logic predict_taken_if;                 // if - IF stage prediction of taken/not-taken
     logic take_prediction_if;
     logic btb_hit;                          // 
@@ -65,6 +36,276 @@ module OoOCPU (clk, reset);
     logic btb_update_valid;
     logic [63:0] btb_update_pc;
     logic [63:0] btb_update_target;
+
+
+    // IF/ID Pipeline Register Outputs
+    logic [63:0] IFID_pc, IFID_pcplus4;
+    logic [31:0] IFID_instruction;
+    logic IFID_predict_taken;
+    logic [63:0] IFID_predict_target;
+    logic [7:0] IFID_bhr_snapshot;
+
+
+    // Control signals from decoder
+    logic Reg2Loc, RegWrite, ALUSrc, MemWrite, MemRead, MemToReg, FlagSet, BranchReg, BranchUncond, BranchCond, Link;
+    logic [1:0] ALUOp, ImmSel;
+    logic [63:0] immExt, immShifted;
+
+
+    // BR instruction
+    logic rename_branchReg;
+    logic iq_branchReg;
+    logic issue_branchReg;
+
+
+    // Flags 
+    logic rename_flagSet;
+    logic iq_flagSet;
+    logic issue_flagSet;
+    logic flags_write_done;
+
+
+    logic uncond_branch_in_decode;          // redirect pc because decode found unconditional branch?
+    logic [63:0] uncond_branch_target;      // target of unconditional branch
+
+
+    // Decode outputs for rename stage
+    logic [4:0] decode_arch_source1;         // source 1 arch reg number
+    logic [4:0] decode_arch_source2;         // source 2 arch reg number
+    logic [4:0] decode_arch_dest;            // destination arch reg number
+    logic decode_has_dest;                   // some instructions don't write (stores, branches)
+    logic decode_branch;                     // is this instruction a branch?
+    logic decode_load;                       // is this instruction a load?
+    logic decode_store;                      // is this instruction a store?
+    logic [1:0] decode_alu_op;               // ALU operation for the instruction
+    logic [63:0] decode_pc;                  // PC of the instruction being renamed
+    logic [63:0] decode_immediate;           // immediate value for the instruction
+    logic decode_imm;                        // does this instruction use the immediate value?
+    logic decode_uncondBranch;               // is this instruction an unconditional branch?
+    logic decode_condBranch;                 // is this instruction a conditional branch?
+    logic [63:0] decode_branchTarget;        // target address for the branch instruction
+    logic decode_branch_cbz;                 // is this instruction a CBZ instruction?
+    logic [10:0] op11;                       // the 11-bit opcode field of the instruction 
+    logic decode_predictedTaken;             // was this instruction predicted taken at fetch time? 
+    logic [63:0] decode_predictedTarget;     // what was the predicted target at fetch time?
+
+
+    // Rename stage
+    logic rename_valid;
+    logic [5:0] rename_source1, rename_source2;
+    logic [5:0] rename_dest, rename_old;
+    logic rename_source1_ready, rename_source2_ready;
+    logic [63:0] rename_pc;
+    logic [1:0] rename_alu_op;
+    logic rename_branch, rename_load, rename_store;
+    logic [4:0] rename_arch_dest;
+    logic rename_stall;
+    logic [63:0] rename_immediate;
+    logic rename_imm;
+    logic rename_uncondBranch, rename_condBranch;
+    logic [63:0] rename_branchTarget;
+    logic rename_branch_cbz;
+    logic dispatch_stall;
+    logic [63:0] rename_predictedTarget;
+    logic rename_predictedTaken;
+
+
+    // ROB
+    logic rob_dispatch_valid;
+    logic [4:0] rob_dispatch_arch_dest;
+    logic [5:0] rob_dispatch_dest, rob_dispatch_old;
+    logic [63:0] rob_dispatch_pc;
+    logic rob_dispatch_branch, rob_dispatch_store;
+    logic [4:0] rob_dispatch_idx;
+    logic rob_full;
+    logic rob_commit_valid;
+    logic [4:0] rob_commit_arch_dest;
+    logic [5:0] rob_commit_dest, rob_commit_old;
+    logic rob_commit_store, rob_commit_branch, rob_commit_load;
+    logic [63:0] rob_commit_pc;
+    logic rob_flush_valid;
+    logic [63:0] rob_flush_pc;
+    logic dispatch_checkpoint_valid;
+    logic [4:0] dispatch_checkpoint_id;
+
+
+    // Issue Queue
+    logic iq_full;
+    logic issue_valid;
+    logic [5:0] issue_dest, issue_source1, issue_source2;
+    logic [4:0] issue_rob_idx;
+    logic [1:0] issue_alu_op;
+    logic issue_load, issue_store;
+    logic iq_dispatch_valid;
+    logic [5:0] iq_dispatch_dest, iq_dispatch_source1, iq_dispatch_source2;
+    logic iq_dispatch_source1_ready, iq_dispatch_source2_ready;
+    logic [4:0] iq_dispatch_rob_idx;
+    logic [1:0] iq_dispatch_alu_op;
+    logic iq_dispatch_load, iq_dispatch_store;
+    logic [63:0] iq_dispatch_immediate;
+    logic iq_dispatch_imm;
+    logic iq_dispatch_uncondBranch;
+    logic iq_dispatch_condBranch;
+    logic [63:0] iq_dispatch_branchTarget;
+    logic iq_dispatch_branch_cbz;
+    logic [63:0] iq_dispatch_pc;
+    logic [63:0] iq_dispatch_predictedTarget;
+    logic [63:0] issue_immediate;
+    logic issue_imm;
+    logic issue_uncondBranch;
+    logic issue_condBranch;
+    logic [63:0] issue_branchTarget;
+    logic issue_branch_cbz;
+    logic [63:0] issue_pc;
+    logic issue_predictedTaken;
+    logic [63:0] issue_predictedTarget;
+    logic [3:0] issue_sq_idx;
+    logic [3:0] issue_lq_idx; 
+
+
+    // Store Queue
+    logic [3:0] sq_dispatch_idx;
+    logic sq_full;
+    logic sq_fwd_hit;
+    logic [63:0] sq_fwd_data;
+    logic sq_commit_ready;
+    logic [63:0] sq_commit_addr, sq_commit_data;
+    logic sq_dispatch_valid;
+    logic sq_write_valid;
+    logic [3:0] sq_write_idx;
+    logic [63:0] sq_write_addr, sq_write_data;
+    logic sq_fwd_req_valid;
+    logic [63:0] sq_fwd_req_addr;
+    logic lq_dispatch_valid;
+    logic [4:0] sq_rob_idx;
+
+
+    // Load Queue
+    logic [3:0] lq_dispatch_idx;
+    logic lq_full;
+    logic [5:0] lq_result_dest;
+    logic [4:0] lq_result_rob_idx;
+    logic lq_exec_valid;
+    logic [3:0] lq_exec_idx;
+    logic [63:0] lq_exec_addr;
+    logic lq_result_valid;
+    logic [63:0] lq_result_data;
+    logic [3:0] lq_result_idx;
+    logic lq_dcache_req;
+    logic [63:0] lq_dcache_addr;
+    logic lq_dcache_resp_valid;
+    logic [63:0] lq_dcache_resp_data;
+
+
+    // D-Cache Instantiations 
+    logic dcache_valid_req;
+    logic dcache_enable_req;
+    logic [63:0] dcache_addr_req;
+    logic [63:0] dcache_store_data_req;
+    logic dcache_ready_resp;
+    logic [63:0] dcache_load_data_resp;
+    logic sq_wants_dcache;
+    logic dcache_accept;
+
+    logic dcache_mem_req;
+    logic dcache_mem_enable;
+    logic [63:0] dcache_mem_addr;
+    logic [63:0] dcache_mem_write_data;
+    logic dcache_mem_resp_valid;
+    logic [255:0] dcache_mem_resp_data;
+
+
+    // Physical Register File
+    logic [5:0] read_phys_reg1, read_phys_reg2;
+    logic [63:0] read_data1, read_data2;
+
+
+    // Execute stage
+    logic ex_valid;
+    logic [5:0] ex_dest;
+    logic [63:0] ex_result;
+    logic [4:0] ex_rob_idx;
+    logic ex_exception;
+    logic ex_sq_write_valid;
+    logic [63:0] ex_sq_write_addr, ex_sq_write_data;
+    logic ex_lq_exec_valid;
+    logic [63:0] ex_lq_exec_addr;
+    logic ex_branchResolved;
+    logic ex_branch_actualTaken;
+    logic [63:0] ex_branch_actualTarget;
+
+
+    // CDB
+    logic cdb_valid;
+    logic [5:0] cdb_phys_dest;
+    logic [63:0] cdb_result;
+    logic [4:0] cdb_rob_idx;
+    logic cdb_branchTaken;
+    logic cdb_exception;
+    logic cdb_from_alu;
+    logic cdb_from_lq;
+    logic lq_cdb_pending;
+    logic [63:0] lq_pending_data;
+    logic [5:0] lq_pending_dest;
+    logic [4:0] lq_pending_rob_idx;
+
+
+    // Common Data Bus
+    logic commit_free_valid;
+    logic [5:0] commit_free_preg;
+    logic commit_sq_valid;
+    logic commit_flush;
+    logic [63:0] commit_flush_pc;
+    logic commit_flush_ack;
+
+
+    // Recovery Unit
+    logic recovery_mispredict;
+    logic recovery_rat_restore_valid;
+    logic [4:0] recovery_rat_restore_id;
+    logic recovery_bp_update_valid;
+    logic [63:0] recovery_bp_update_pc;
+    logic recovery_bp_update_taken;
+    logic recovery_flush;
+    logic [63:0] recovery_redirect_pc;
+    logic [4:0] recovery_restore_id;
+    logic recovery_flush_reg;
+    logic [63:0] recovery_redirect_pc_reg;
+    logic [4:0] recovery_restore_id_reg;
+
+
+    // Branch prediction info carried through pipeline
+    // We need to track predicted direction and target per branch
+    // For now we use IFID values latched at dispatch time
+    logic ex_branch_predictedTaken;
+    logic [63:0] ex_branch_predictedTarget;
+    logic [4:0] ex_branch_checkpoint_id;
+    logic [63:0] ex_branch_pc;
+
+
+
+    //  PHASE 1 — FETCH (unchanged from PipelinedCPU)
+
+    PC programCounter (.clk(clk), .reset(reset), .writeEnable(PCWrite),
+                       .next_pc(next_pc), .pc(pc));
+
+    // Computes PC+4 (the default next PC)
+    adder64 pcAdder (.sum(pcplus4), .cout(pcAdder_cout), .carry(pcAdder_carry),     // pcAdder_cout and pcAdder_carry are unused
+                     .a(pc), .b(64'd4), .cin(1'b0));
+    
+
+    icache instructionCache (.clk(clk), .reset(reset), .pc(pc), .valid(1'b1),       // Valid is always 1 as the cache always servives requests in our CPU
+                             .instruction(instruction), .ready(icache_ready),
+                             .mem_req(icache_mem_req), .mem_addr(icache_mem_addr),
+                             .mem_resp_valid(icache_mem_resp_valid),
+                             .mem_resp_data(icache_mem_resp_data));
+
+    // The fake DRAM backend for the I-Cache
+    // I-Cache misses, asserts mem_req, mem_backend counts 10 cycles, responds, I-Cache fills and process repeats
+    mem_backend imemBackend (.clk(clk), .reset(reset),.req_valid(icache_mem_req),
+                              .req_addr(icache_mem_addr),.resp_valid(icache_mem_resp_valid),
+                              .resp_data(icache_mem_resp_data));
+
 
     gshare branchPredictor (.clk(clk), .reset(reset), .predict_pc(pc), .predict_taken(predict_taken_if),
                             .predict_bhr_snapshot(predict_bhr_snapshot), .update_valid(gshare_update_valid),
@@ -88,13 +329,13 @@ module OoOCPU (clk, reset);
     // Fetch can advance if rename can accept the current instruction, dispatch can accept the current instruction, 
     // and the I-cache has the instruction ready. 
     // Else everything freezes in fetch
-    assign PCWrite   = !rename_stall && !dispatch_stall && icache_ready;
+    assign PCWrite = !rename_stall && !dispatch_stall && icache_ready;
     assign IFID_Write = !rename_stall && !dispatch_stall && icache_ready;
-
+    assign IFID_RegWrite = IFID_Write || IFID_Flush;
 
     // Flush everything in IF/ID if there is a branch misprediction in EX (everything fetched is wrong)
     // or decode found and uncoditional branch (everything in fetch is on the wrong path)
-    assign IFID_Flush = recovery_flush_reg || uncond_branch_in_decode;
+    assign IFID_Flush = recovery_flush || uncond_branch_in_decode;
 
 
     logic [63:0] branch_or_predict_pc;      // PC of the branch or prediction
@@ -121,19 +362,13 @@ module OoOCPU (clk, reset);
     mux32_2to1 ifid_flush_mux (.a(instruction), .b(32'b0), .sel(IFID_Flush), .out(IFID_instruction_in));
 
 
-    // IF/ID Pipeline Register Outputs
-    logic [63:0] IFID_pc, IFID_pcplus4;
-    logic [31:0] IFID_instruction;
-    logic IFID_predict_taken;
-    logic [63:0] IFID_predict_target;
-    logic [7:0] IFID_bhr_snapshot;
 
-    register64 IFID_pc_reg (.q(IFID_pc), .d(pc), .writeEnable(IFID_Write), .clk(clk));                                                        // the PC of the instruction (needed by decode to compute branch targets)
-    register64 IFID_pcplus4_reg (.q(IFID_pcplus4), .d(pcplus4), .writeEnable(IFID_Write), .clk(clk));                                         // the return address for BL instruction
-    register32 IFID_instruction_reg (.q(IFID_instruction), .d(IFID_instruction_in), .writeEnable(IFID_Write), .clk(clk), .reset(reset));      // the 32-bit instruction
-    register1 IFID_predict_taken_reg (.q(IFID_predict_taken), .d(take_prediction_if), .writeEnable(IFID_Write), .clk(clk), .reset(reset));    // did we predict this as taken?
-    register64 IFID_predict_target_reg (.q(IFID_predict_target), .d(predict_target_if), .writeEnable(IFID_Write), .clk(clk));                 // Where did we predict it would go?
-    register8 IFID_bhr_snapshot_reg (.q(IFID_bhr_snapshot), .d(predict_bhr_snapshot), .writeEnable(IFID_Write), .clk(clk), .reset(reset));    // the gshare BHR at prediction time.
+    register64 IFID_pc_reg (.q(IFID_pc), .d(pc), .writeEnable(IFID_RegWrite), .clk(clk));                                                        // the PC of the instruction (needed by decode to compute branch targets)
+    register64 IFID_pcplus4_reg (.q(IFID_pcplus4), .d(pcplus4), .writeEnable(IFID_RegWrite), .clk(clk));                                         // the return address for BL instruction
+    register32 IFID_instruction_reg (.q(IFID_instruction), .d(IFID_instruction_in), .writeEnable(IFID_RegWrite), .clk(clk), .reset(reset));      // the 32-bit instruction
+    register1 IFID_predict_taken_reg (.q(IFID_predict_taken), .d(take_prediction_if), .writeEnable(IFID_RegWrite), .clk(clk), .reset(reset));    // did we predict this as taken?
+    register64 IFID_predict_target_reg (.q(IFID_predict_target), .d(predict_target_if), .writeEnable(IFID_RegWrite), .clk(clk));                 // Where did we predict it would go?
+    register8 IFID_bhr_snapshot_reg (.q(IFID_bhr_snapshot), .d(predict_bhr_snapshot), .writeEnable(IFID_RegWrite), .clk(clk), .reset(reset));    // the gshare BHR at prediction time.
 
     // All six share the writeEnable = IFID_Write - they update tgether or hold together.
 
@@ -143,61 +378,34 @@ module OoOCPU (clk, reset);
 
 //  PHASE 2 — DECODE
 
-    // Control signals from decoder
-    logic Reg2Loc, RegWrite, ALUSrc, MemWrite, MemRead, MemToReg, FlagSet, BranchReg, BranchUncond, BranchCond, Link;
-    logic [1:0] ALUOp, ImmSel;
-
 
     Control control (.instruction(IFID_instruction), .RegWrite(RegWrite), .ALUSrc(ALUSrc),
                      .MemWrite(MemWrite), .MemRead(MemRead), .MemToReg(MemToReg), .BranchUncond(BranchUncond),
                      .BranchCond(BranchCond), .FlagSet(FlagSet), .BranchReg(BranchReg), .Link(Link),
                      .ALUOp(ALUOp), .ImmSel(ImmSel), .Reg2Loc(Reg2Loc));
 
-    logic [63:0] immExt, immShifted;
 
     // immExt is the sign-extended 64-bit immediate. 
     signextend imm (.instruction(IFID_instruction), .ImmSel(ImmSel), .imm64(immExt));
     shiftLeft SL (.in(immExt), .out(immShifted));
 
 
-    logic uncond_branch_in_decode;          // redirect pc because decode found unconditional branch?
-    logic [63:0] uncond_branch_target;      // target of unconditional branch
-
-
     // Unconditional branch detection and target. 
-    assign uncond_branch_in_decode = BranchUncond && !recovery_flush_reg && (IFID_instruction != 32'b0) && icache_ready;
+    assign uncond_branch_in_decode = BranchUncond && !recovery_flush && !recovery_flush_reg && (IFID_instruction != 32'b0) && icache_ready;
 
     // standard branch target calculation: PC + sign-extended immediate (shifted left by 2)
     assign uncond_branch_target = IFID_pc + immShifted;
 
 
 
-    // Decode outputs for rename stage
-    logic [4:0] decode_arch_source1;         // source 1 arch reg number
-    logic [4:0] decode_arch_source2;         // source 2 arch reg number
-    logic [4:0] decode_arch_dest;            // destination arch reg number
-    logic decode_has_dest;                   // some instructions don't write (stores, branches)
-    logic decode_branch;                  // is this instruction a branch?
-    logic decode_load;                    // is this instruction a load?
-    logic decode_store;                   // is this instruction a store?
-    logic [1:0] decode_alu_op;               // ALU operation for the instruction
-    logic [63:0] decode_pc;                  // PC of the instruction being renamed
-    logic [63:0] decode_immediate;           // immediate value for the instruction
-    logic decode_imm;                        // does this instruction use the immediate value?
-    logic decode_uncondBranch;               // is this instruction an unconditional branch?
-    logic decode_condBranch;                 // is this instruction a conditional branch?
-    logic [63:0] decode_branchTarget;        // target address for the branch instruction
-    logic decode_branch_cbz;                 // is this instruction a CBZ instruction?
-    logic [10:0] op11;                       // the 11-bit opcode field of the instruction 
-
-    // Assign them with their corresponding values from the IF/ID pipeline register and control signals
-    assign decode_arch_source1 = IFID_instruction[9:5];
+    // Assign decode valus with their corresponding values from the IF/ID pipeline register and control signals
+    assign decode_arch_source1 = BranchReg ? IFID_instruction[4:0] : IFID_instruction[9:5];
     assign decode_arch_source2 = Reg2Loc ? IFID_instruction[4:0] : IFID_instruction[20:16];
     assign decode_arch_dest = Link ? 5'd30 : IFID_instruction[4:0];
-    assign decode_has_dest  = RegWrite || Link;                         // some instructions dont write (STUR, branches)
+    assign decode_has_dest  = (RegWrite && (decode_arch_dest != 5'd31)) || Link;        // some instructions dont write (STUR, branches)
     assign decode_branch = BranchCond;
-    assign decode_load   = MemRead;
-    assign decode_store  = MemWrite;
+    assign decode_load = MemRead;
+    assign decode_store = MemWrite;
     assign decode_immediate = immExt;
     assign decode_imm = ALUSrc;
     assign decode_uncondBranch = BranchUncond;
@@ -205,6 +413,9 @@ module OoOCPU (clk, reset);
     assign decode_branchTarget = IFID_pc + immShifted;
     assign decode_branch_cbz = (IFID_instruction[31:24] == 8'b10110100);  // CBZ opcode
     assign op11 = IFID_instruction[31:21];
+    assign decode_predictedTaken = IFID_predict_taken;
+    assign decode_predictedTarget = IFID_predict_target;
+
 
     always_comb begin
         case (op11)
@@ -224,30 +435,15 @@ module OoOCPU (clk, reset);
 
 //  PHASE 3 — RENAME
 
-    // Rename stage
-    logic rename_valid;
-    logic [5:0] rename_source1, rename_source2;
-    logic [5:0] rename_dest, rename_old;
-    logic rename_source1_ready, rename_source2_ready;
-    logic [63:0] rename_pc;
-    logic [1:0] rename_alu_op;
-    logic rename_branch, rename_load, rename_store;
-    logic [4:0] rename_arch_dest;
-    logic rename_stall;
-    logic [63:0] rename_immediate;
-    logic rename_imm;
-    logic rename_uncondBranch, rename_condBranch;
-    logic [63:0] rename_branchTarget;
-    logic rename_branch_cbz;
-    logic dispatch_stall;
 
     renameStage rename (.clk(clk), .reset(reset),
         // From decode
-        .decode_valid(!IFID_Flush && (IFID_instruction != 32'b0) && icache_ready && !uncond_branch_in_decode),
+        .decode_valid(!IFID_Flush &&  !recovery_flush && !recovery_flush_reg && (IFID_instruction != 32'b0) && icache_ready && !uncond_branch_in_decode),
         .decode_arch_source1(decode_arch_source1),
         .decode_arch_source2(decode_arch_source2),
         .decode_arch_dest(decode_arch_dest),
         .decode_has_dest(decode_has_dest),
+        .decode_branchReg(BranchReg),
         .decode_pc(IFID_pc),
         .decode_alu_op(decode_alu_op),
         .decode_branch(decode_branch),
@@ -259,6 +455,9 @@ module OoOCPU (clk, reset);
         .decode_condBranch(decode_condBranch),
         .decode_branchTarget(decode_branchTarget),
         .decode_branch_cbz(decode_branch_cbz),
+        .decode_predictedTaken(decode_predictedTaken),
+        .decode_predictedTarget(decode_predictedTarget),
+        .decode_flagSet(FlagSet),
 
         // To dispatch
         .rename_valid(rename_valid),
@@ -268,6 +467,7 @@ module OoOCPU (clk, reset);
         .rename_old(rename_old),
         .rename_source1_ready(rename_source1_ready),
         .rename_source2_ready(rename_source2_ready),
+        .rename_branchReg(rename_branchReg),
         .rename_pc(rename_pc),
         .rename_alu_op(rename_alu_op),
         .rename_branch(rename_branch),
@@ -280,6 +480,9 @@ module OoOCPU (clk, reset);
         .rename_condBranch(rename_condBranch),
         .rename_branchTarget(rename_branchTarget),
         .rename_branch_cbz(rename_branch_cbz),
+        .rename_predictedTaken(rename_predictedTaken),
+        .rename_predictedTarget(rename_predictedTarget),
+        .rename_flagSet(rename_flagSet),
 
         // Stall
         .stall(rename_stall),
@@ -297,91 +500,15 @@ module OoOCPU (clk, reset);
         .checkpoint_id(dispatch_checkpoint_id),
 
         // Restore (on misprediction)
-        .restore_valid(recovery_flush_reg),
-        .restore_id(recovery_restore_id_reg),
+        .restore_valid(recovery_flush),
+        .restore_id(recovery_restore_id),
 
         // Flush
-        .flush(recovery_flush_reg));
+        .flush(recovery_flush));
 
 
 
 //  PHASE 4 — DISPATCH
-
-    // ROB
-    logic rob_dispatch_valid;
-    logic [4:0] rob_dispatch_arch_dest;
-    logic [5:0] rob_dispatch_dest, rob_dispatch_old;
-    logic [63:0] rob_dispatch_pc;
-    logic rob_dispatch_branch, rob_dispatch_store;
-    logic [4:0] rob_dispatch_idx;
-    logic rob_full;
-    logic rob_commit_valid;
-    logic [4:0] rob_commit_arch_dest;
-    logic [5:0] rob_commit_dest, rob_commit_old;
-    logic rob_commit_store, rob_commit_branch;
-    logic [63:0] rob_commit_pc;
-    logic rob_flush_valid;
-    logic [63:0] rob_flush_pc;
-    logic dispatch_checkpoint_valid;
-    logic [4:0] dispatch_checkpoint_id;
-
-    // Issue Queue
-    logic iq_full;
-    logic issue_valid;
-    logic [5:0] issue_dest, issue_source1, issue_source2;
-    logic [4:0] issue_rob_idx;
-    logic [1:0] issue_alu_op;
-    logic issue_load, issue_store;
-    logic iq_dispatch_valid;
-    logic [5:0] iq_dispatch_dest, iq_dispatch_source1, iq_dispatch_source2;
-    logic iq_dispatch_source1_ready, iq_dispatch_source2_ready;
-    logic [4:0] iq_dispatch_rob_idx;
-    logic [1:0] iq_dispatch_alu_op;
-    logic iq_dispatch_load, iq_dispatch_store;
-    logic [63:0] iq_dispatch_immediate;
-    logic iq_dispatch_imm;
-    logic iq_dispatch_uncondBranch;
-    logic iq_dispatch_condBranch;
-    logic [63:0] iq_dispatch_branchTarget;
-    logic iq_dispatch_branch_cbz;
-    logic [63:0] issue_immediate;
-    logic issue_imm;
-    logic issue_uncondBranch;
-    logic issue_condBranch;
-    logic [63:0] issue_branchTarget;
-    logic issue_branch_cbz;
-
-    // Store Queue
-    logic [3:0] sq_dispatch_idx;
-    logic sq_full;
-    logic sq_fwd_hit;
-    logic [63:0] sq_fwd_data;
-    logic sq_commit_ready;
-    logic [63:0] sq_commit_addr, sq_commit_data;
-    logic sq_dispatch_valid;
-    logic sq_write_valid;
-    logic [3:0] sq_write_idx;
-    logic [63:0] sq_write_addr, sq_write_data;
-    logic sq_fwd_req_valid;
-    logic [63:0] sq_fwd_req_addr;
-    logic lq_dispatch_valid;
-    logic [4:0] sq_rob_idx;
-
-    // Load Queue
-    logic [3:0] lq_dispatch_idx;
-    logic lq_full;
-    logic [5:0] lq_result_dest;
-    logic [4:0] lq_result_rob_idx;
-    logic lq_exec_valid;
-    logic [3:0] lq_exec_idx;
-    logic [63:0] lq_exec_addr;
-    logic lq_result_valid;
-    logic [63:0] lq_result_data;
-    logic [3:0] lq_result_idx;
-    logic lq_dcache_req;
-    logic [63:0] lq_dcache_addr;
-    logic lq_dcache_resp_valid;
-    logic [63:0] lq_dcache_resp_data;
 
     dispatchStage dispatch (.clk(clk), .reset(reset),
 
@@ -393,6 +520,7 @@ module OoOCPU (clk, reset);
         .rename_old(rename_old),
         .rename_source1_ready(rename_source1_ready),
         .rename_source2_ready(rename_source2_ready),
+        .rename_branchReg(rename_branchReg),
         .rename_pc(rename_pc),
         .rename_alu_op(rename_alu_op),
         .rename_branch(rename_branch),
@@ -405,6 +533,9 @@ module OoOCPU (clk, reset);
         .rename_condBranch(rename_condBranch),
         .rename_branchTarget(rename_branchTarget),
         .rename_branch_cbz(rename_branch_cbz),
+        .rename_predictedTaken(rename_predictedTaken),
+        .rename_predictedTarget(rename_predictedTarget),
+        .rename_flagSet(rename_flagSet),
 
         // Stall
         .stall(dispatch_stall),
@@ -427,6 +558,7 @@ module OoOCPU (clk, reset);
         .iq_source2(iq_dispatch_source2),
         .iq_source1_ready(iq_dispatch_source1_ready),
         .iq_source2_ready(iq_dispatch_source2_ready),
+        .iq_branchReg(iq_branchReg),
         .iq_rob_idx(iq_dispatch_rob_idx),
         .iq_alu_op(iq_dispatch_alu_op),
         .iq_load(iq_dispatch_load),
@@ -437,7 +569,11 @@ module OoOCPU (clk, reset);
         .iq_condBranch(iq_dispatch_condBranch),
         .iq_branchTarget(iq_dispatch_branchTarget),
         .iq_branch_cbz(iq_dispatch_branch_cbz),
+        .iq_pc(iq_dispatch_pc),
+        .iq_predictedTaken(iq_dispatch_predictedTaken),
+        .iq_predictedTarget(iq_dispatch_predictedTarget),
         .iq_full(iq_full),
+        .iq_flagSet(iq_flagSet),
 
         // To Store Queue
         .sq_dispatch_valid(sq_dispatch_valid),
@@ -449,7 +585,10 @@ module OoOCPU (clk, reset);
 
         // Checkpoint trigger
         .checkpoint_valid(dispatch_checkpoint_valid),
-        .checkpoint_id(dispatch_checkpoint_id));
+        .checkpoint_id(dispatch_checkpoint_id),
+
+        // Flush
+        .flush(recovery_flush || recovery_flush_reg));
 
 
 
@@ -463,6 +602,7 @@ module OoOCPU (clk, reset);
         .dispatch_pc(rob_dispatch_pc),
         .dispatch_branch(rob_dispatch_branch),
         .dispatch_store(rob_dispatch_store),
+        .dispatch_load(iq_dispatch_load),
         .dispatch_rob_idx(rob_dispatch_idx),
         .full(rob_full),
 
@@ -472,19 +612,25 @@ module OoOCPU (clk, reset);
         .wb_branchTaken(cdb_branchTaken),
         .wb_exception(cdb_exception),
 
+        // From Stores
+        .store_compl_valid(ex_sq_write_valid),
+        .store_compl_rob_idx(issue_rob_idx),
+
         // Commit
         .commit_valid(rob_commit_valid),
         .commit_arch_dest(rob_commit_arch_dest),
         .commit_dest(rob_commit_dest),
         .commit_old(rob_commit_old),
         .commit_store(rob_commit_store),
+        .commit_load(rob_commit_load),
         .commit_branch(rob_commit_branch),
         .commit_pc(rob_commit_pc),
 
         // Flush
         .flush_valid(rob_flush_valid),
         .flush_pc(rob_flush_pc),
-        .flush_ack(recovery_flush_reg));
+        .flush_ack(recovery_flush_reg),
+        .flush_rob_idx(recovery_restore_id_reg));
 
 
     issueQueue iq (.clk(clk), .reset(reset),
@@ -496,16 +642,23 @@ module OoOCPU (clk, reset);
         .dispatch_source2(iq_dispatch_source2),
         .dispatch_source1_ready(iq_dispatch_source1_ready),
         .dispatch_source2_ready(iq_dispatch_source2_ready),
+        .dispatch_branchReg(iq_branchReg),
         .dispatch_rob_idx(iq_dispatch_rob_idx),
         .dispatch_alu_op(iq_dispatch_alu_op),
         .dispatch_load(iq_dispatch_load),
         .dispatch_store(iq_dispatch_store),
+        .dispatch_sq_idx(sq_dispatch_idx),
+        .dispatch_lq_idx(lq_dispatch_idx),
         .dispatch_immediate(iq_dispatch_immediate),
         .dispatch_imm(iq_dispatch_imm),
         .dispatch_uncondBranch(iq_dispatch_uncondBranch),
         .dispatch_condBranch(iq_dispatch_condBranch),
         .dispatch_branchTarget(iq_dispatch_branchTarget),
         .dispatch_branch_cbz(iq_dispatch_branch_cbz),
+        .dispatch_pc(iq_dispatch_pc),
+        .dispatch_predictedTaken(iq_dispatch_predictedTaken),
+        .dispatch_predictedTarget(iq_dispatch_predictedTarget),
+        .dispatch_flagSet(iq_flagSet),
         .full(iq_full),
 
         // Wakeup (from CDB)
@@ -527,9 +680,20 @@ module OoOCPU (clk, reset);
         .issue_condBranch(issue_condBranch),
         .issue_branchTarget(issue_branchTarget),
         .issue_branch_cbz(issue_branch_cbz),
+        .issue_sq_idx(issue_sq_idx),
+        .issue_lq_idx(issue_lq_idx),
+        .issue_pc(issue_pc),
+        .issue_predictedTaken(issue_predictedTaken),
+        .issue_predictedTarget(issue_predictedTarget),
+        .issue_flagSet(issue_flagSet),
+        .issue_branchReg(issue_branchReg),
+
+        // Flag
+        .flags_write_done(flags_write_done),
 
         // Flush
-        .flush(recovery_flush_reg));
+        .flush(recovery_flush),
+        .flush_rob_idx(recovery_restore_id));
 
 
     storeQueue sq (.clk(clk),.reset(reset),
@@ -559,10 +723,11 @@ module OoOCPU (clk, reset);
         .commit_ready(sq_commit_ready),
         .commit_addr(sq_commit_addr),
         .commit_data(sq_commit_data),
+        .commit_accept(dcache_accept && sq_wants_dcache),
 
         // Flush
-        .flush(recovery_flush_reg),
-        .flush_rob_idx(recovery_restore_id_reg));
+        .flush(recovery_flush),
+        .flush_rob_idx(recovery_restore_id));
 
 
     loadQueue lq (.clk(clk), .reset(reset),
@@ -598,20 +763,55 @@ module OoOCPU (clk, reset);
         .result_lq_idx(lq_result_idx),
 
         // Commit
-        .commit_valid(rob_commit_valid && !rob_commit_store && !rob_commit_branch),
+        .commit_valid(rob_commit_valid && rob_commit_load),
 
         // Flush
-        .flush(recovery_flush_reg),
-        .flush_rob_idx(recovery_restore_id_reg));
+        .flush(recovery_flush),
+        .flush_rob_idx(recovery_restore_id));
+
+
+
+    // Combinational
+    assign sq_wants_dcache = commit_sq_valid && sq_commit_ready;
+    assign dcache_valid_req = sq_wants_dcache || lq_dcache_req;
+    assign dcache_enable_req = sq_wants_dcache;
+    assign dcache_addr_req = sq_wants_dcache ? sq_commit_addr : lq_dcache_addr;
+    assign dcache_store_data_req = sq_commit_data;
+    assign lq_dcache_resp_valid = dcache_ready_resp && !dcache_enable_req;
+    assign lq_dcache_resp_data  = dcache_load_data_resp;
+
+
+    dcache dc(.clk(clk), .reset(reset),
+        
+        .addr(dcache_addr_req),
+        .valid(dcache_valid_req),
+        .enable(dcache_enable_req),
+        .store_data(dcache_store_data_req),
+        .load_data(dcache_load_data_resp),
+        .ready(dcache_ready_resp),
+        .accept(dcache_accept),
+        .mem_req(dcache_mem_req),
+        .mem_enable(dcache_mem_enable),
+        .mem_addr(dcache_mem_addr),
+        .mem_write_data(dcache_mem_write_data),
+        .mem_resp_valid(dcache_mem_resp_valid),
+        .mem_resp_data(dcache_mem_resp_data));
+
+    
+    dmem_backend dm(.clk(clk), .reset(reset),
+    
+        .req_valid(dcache_mem_req),
+        .req_enable(dcache_mem_enable),
+        .req_addr(dcache_mem_addr),
+        .req_write_data(dcache_mem_write_data),
+        .resp_valid(dcache_mem_resp_valid),
+        .resp_data(dcache_mem_resp_data));
+
 
 
 
 
 //  PHASE 5 — ISSUE + EXECUTE + WRITEBACK
-
-    // Physical Register File
-    logic [5:0] read_phys_reg1, read_phys_reg2;
-    logic [63:0] read_data1, read_data2;
 
     physicalRegFile prf (.clk(clk), .reset(reset),
 
@@ -626,20 +826,6 @@ module OoOCPU (clk, reset);
         .write_phys_reg(cdb_phys_dest),
         .write_data(cdb_result));
 
-
-    // Execute stage
-    logic ex_valid;
-    logic [5:0] ex_dest;
-    logic [63:0] ex_result;
-    logic [4:0] ex_rob_idx;
-    logic ex_exception;
-    logic ex_sq_write_valid;
-    logic [63:0] ex_sq_write_addr, ex_sq_write_data;
-    logic ex_lq_exec_valid;
-    logic [63:0] ex_lq_exec_addr;
-    logic ex_branchResolved;
-    logic ex_branch_actualTaken;
-    logic [63:0] ex_branch_actualTarget;
 
 
     executeStage ex_stage (.clk(clk), .reset(reset),
@@ -659,6 +845,11 @@ module OoOCPU (clk, reset);
         .issue_condBranch(issue_condBranch),
         .issue_branchTarget(issue_branchTarget),
         .issue_branch_cbz(issue_branch_cbz),
+        .issue_flagSet(issue_flagSet),
+        .issue_pc(issue_pc),
+        .issue_predictedTaken(issue_predictedTaken),
+        .issue_predictedTarget(issue_predictedTarget),
+        .issue_branchReg(issue_branchReg),
 
         // PRF read
         .read_phys_reg1(read_phys_reg1),
@@ -686,41 +877,38 @@ module OoOCPU (clk, reset);
         .branchResolved(ex_branchResolved),
         .branch_actualTaken(ex_branch_actualTaken),
         .branch_actualTarget(ex_branch_actualTarget),
+        .branch_pc(ex_branch_pc),
+        .branch_predictedTaken(ex_branch_predictedTaken),
+        .branch_predictedTarget(ex_branch_predictedTarget),
+
+        // Flags
+        .flags_write_done(flags_write_done),
 
         // Flush
-        .flush(recovery_flush_reg));
+        .flush(1'b0));
 
 
-    // CDB
-    logic cdb_valid;
-    logic [5:0] cdb_phys_dest;
-    logic [63:0] cdb_result;
-    logic [4:0] cdb_rob_idx;
-    logic cdb_branchTaken;
-    logic cdb_exception;
-    logic cdb_from_alu;
-    logic cdb_from_lq;
 
     // Connect execute - SQ
     assign sq_write_valid = ex_sq_write_valid;
     assign sq_write_addr = ex_sq_write_addr;
     assign sq_write_data = ex_sq_write_data;
-    assign sq_write_idx = sq_dispatch_idx;
+    assign sq_write_idx = issue_sq_idx;
     assign lq_exec_valid = ex_lq_exec_valid;
     assign lq_exec_addr = ex_lq_exec_addr;
-    assign lq_exec_idx = lq_dispatch_idx;
+    assign lq_exec_idx = issue_lq_idx;
     assign sq_fwd_req_valid = ex_lq_exec_valid;
     assign sq_fwd_req_addr = ex_lq_exec_addr;
     assign cdb_from_alu = ex_valid;
-    assign cdb_from_lq = lq_result_valid && !ex_valid;  // LQ wins only if ALU idle
+    assign cdb_from_lq = !ex_valid && (lq_cdb_pending || lq_result_valid);  // LQ wins only if ALU idle
 
     cdb common_data_bus (.clk(clk), .reset(reset),
 
         // Mux between ALU and LQ results
         .ex_valid(cdb_from_alu || cdb_from_lq),
-        .ex_phys_dest(cdb_from_alu ? ex_dest : lq_result_dest),
-        .ex_result(cdb_from_alu ? ex_result : lq_result_data),
-        .ex_rob_idx(cdb_from_alu ? ex_rob_idx : lq_result_rob_idx),
+        .ex_phys_dest(cdb_from_alu ? ex_dest : (lq_cdb_pending ? lq_pending_dest : lq_result_dest)),
+        .ex_result(cdb_from_alu ? ex_result : (lq_cdb_pending ? lq_pending_data : lq_result_data)),
+        .ex_rob_idx(cdb_from_alu ? ex_rob_idx : (lq_cdb_pending ? lq_pending_rob_idx : lq_result_rob_idx)),
         .ex_branchTaken(1'b0),
         .ex_exception(cdb_from_alu ? ex_exception : 1'b0),
 
@@ -733,22 +921,36 @@ module OoOCPU (clk, reset);
         .cdb_exception(cdb_exception));
 
 
-    // D-Cache connection for loads
-    // For now: stub with zero-latency response
-    // Replace with real dcache + dmem_backend during cache integration
-    assign lq_dcache_resp_valid = lq_dcache_req;
-    assign lq_dcache_resp_data  = 64'hDEAD_BEEF;  // placeholder
-    
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            lq_cdb_pending <= 1'b0;
+            lq_pending_data <= 64'd0;
+            lq_pending_dest <= 6'd0;
+            lq_pending_rob_idx <= 5'd0;
+        end
+
+        else if (recovery_flush_reg) begin
+            lq_cdb_pending <= 1'b0;
+        end
+
+        else begin
+            // Load result arrived while ALU owns the CDB and we save it for later.
+            if (lq_result_valid && ex_valid) begin
+                lq_cdb_pending <= 1'b1;
+                lq_pending_data <= lq_result_data;
+                lq_pending_dest <= lq_result_dest;
+                lq_pending_rob_idx <= lq_result_rob_idx;
+            end
+
+            // Previously buffered load gets CDB this cycle.
+            else if (lq_cdb_pending && !ex_valid) begin
+                lq_cdb_pending <= 1'b0;
+            end
+        end
+    end
 
 
 //  PHASE 6 — COMMIT + RECOVERY
-
-    logic commit_free_valid;
-    logic [5:0] commit_free_preg;
-    logic commit_sq_valid;
-    logic commit_flush;
-    logic [63:0] commit_flush_pc;
-    logic commit_flush_ack;
     
     commitStage commit (.clk(clk), .reset(reset),
 
@@ -778,21 +980,6 @@ module OoOCPU (clk, reset);
         .flush_ack(commit_flush_ack));
 
 
-    // Recovery Unit
-    logic recovery_mispredict;
-    logic recovery_rat_restore_valid;
-    logic [4:0] recovery_rat_restore_id;
-    logic recovery_bp_update_valid;
-    logic [63:0] recovery_bp_update_pc;
-    logic recovery_bp_update_taken;
-    logic recovery_flush;
-    logic [63:0] recovery_redirect_pc;
-    logic [4:0] recovery_restore_id;
-
-
-    logic recovery_flush_reg;
-    logic [63:0] recovery_redirect_pc_reg;
-    logic [4:0] recovery_restore_id_reg;
 
     // Register recovery outputs to reduce critical path
     always_ff @(posedge clk or posedge reset) begin
@@ -808,20 +995,10 @@ module OoOCPU (clk, reset);
     end
 
 
-    // Branch prediction info carried through pipeline
-    // We need to track predicted direction and target per branch
-    // For now we use IFID values latched at dispatch time
-    logic ex_branch_predictedTaken;
-    logic [63:0] ex_branch_predictedTarget;
-    logic [4:0] ex_branch_checkpoint_id;
-    logic [63:0] ex_branch_pc;
+    assign ex_branch_checkpoint_id = ex_rob_idx;
 
-    // use IFID values directly (works for single-issue)
-    assign ex_branch_predictedTaken = IFID_predict_taken;
-    assign ex_branch_predictedTarget = IFID_predict_target;
-    assign ex_branch_checkpoint_id = rob_dispatch_idx;
-    assign ex_branch_pc = IFID_pc;
 
+    // Recovery Stage
 
     recoveryUnit recovery (.clk(clk), .reset(reset),
 

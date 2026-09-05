@@ -21,6 +21,10 @@ module renameStage (
     input logic decode_condBranch,              // is this instruction a conditional branch?
     input logic [63:0] decode_branchTarget,     // target address for the branch instruction
     input logic decode_branch_cbz,              // is this instruction a CBZ instruction?
+    input logic decode_predictedTaken,          // was the branch predicted as taken?
+    input logic [63:0] decode_predictedTarget,  // predicted target address for the branch instruction
+    input logic decode_flagSet,                 // Flags for conditional branches
+    input logic decode_branchReg,
 
 
     // To dispatch (renamed instruction)
@@ -43,6 +47,11 @@ module renameStage (
     output logic rename_condBranch,             // is this instruction a conditional branch?
     output logic [63:0] rename_branchTarget,    // target address for the branch instruction
     output logic rename_branch_cbz,             // is this instruction a CBZ instruction?
+    output logic rename_predictedTaken,         // was the branch predicted as taken?
+    output logic [63:0] rename_predictedTarget, // predicted target address for the branch instruction
+    output logic rename_flagSet,                // Flags for conditional branch
+    output logic rename_branchReg,
+
 
     // Stall
     output logic stall,                         // pulse if rename cannot accept a new instruction (free list empty)
@@ -71,7 +80,7 @@ module renameStage (
     logic [5:0] provide_reg;
     logic free_list_empty;
 
-    freeList fl (.clk(clk), .reset(reset || flush), .provide_req(decode_valid && decode_has_dest && !free_list_empty),
+    freeList fl (.clk(clk), .reset(reset), .provide_req(decode_valid && decode_has_dest && !free_list_empty),
                   .provide_reg_num(provide_reg), .empty(free_list_empty), .old_reg(commit_free_valid),
                   .old_reg_num(commit_free_preg));
 
@@ -82,14 +91,14 @@ module renameStage (
     rat rat_inst (.clk(clk), .reset(reset), .read_reg1(decode_arch_source1), .read_reg2(decode_arch_source2),
                   .read_preg1(rat_preg1), .read_preg2(rat_preg2), .write_valid(decode_valid && decode_has_dest && !stall),
                   .write_reg(decode_arch_dest), .write_preg_old(rat_old), .write_preg_new(provide_reg),
-                  .checkpoint_valid(checkpoint_valid), .checkpoint_id(checkpoint_id), .restore_valid(restore_valid || flush),
+                  .checkpoint_valid(checkpoint_valid), .checkpoint_id(checkpoint_id), .restore_valid(restore_valid),
                   .restore_id(restore_id));
 
 
     // Busy Table
     logic busy1, busy2;
 
-    busyTable bt (.clk(clk), .reset(reset || flush), .set_valid(decode_valid && decode_has_dest && !stall),
+    busyTable bt (.clk(clk), .reset(reset), .set_valid(decode_valid && decode_has_dest && !stall),
                    .set_preg(provide_reg), .clear_valid(cdb_valid), .clear_preg(cdb_phys_dest),
                    .read_preg1(rat_preg1), .read_preg2(rat_preg2), .busy1(busy1), .busy2(busy2));
 
@@ -102,8 +111,8 @@ module renameStage (
     assign rename_valid = decode_valid && !stall;                   // instruction is valid if its real and passing through the cycle and not stalled. 
     assign rename_source1 = rat_preg1;                         
     assign rename_source2 = rat_preg2;
-    assign rename_dest = provide_reg;                           // the phys reg free list gives us. This instruction now owns this phys reg
-    assign rename_old = rat_old;                               // the phys reg the arch dest used to point to. 
+    assign rename_dest = decode_has_dest ? provide_reg : 6'd0;      // the phys reg free list gives us. This instruction now owns this phys reg
+    assign rename_old = decode_has_dest ? rat_old : 6'd0;           // the phys reg the arch dest used to point to. 
     assign rename_source1_ready = !busy1;                           // if busy1 = 1 (waiting), source1 is not ready and vice-versa
     assign rename_source2_ready = !busy2;                           // if busy2 = 1 (waiting), source2 is not ready and vice-versa
     assign rename_pc = decode_pc;                                   // Rest are just a rename of the input.
@@ -118,6 +127,10 @@ module renameStage (
     assign rename_condBranch = decode_condBranch;
     assign rename_branchTarget = decode_branchTarget;
     assign rename_branch_cbz = decode_branch_cbz;
+    assign rename_predictedTaken = decode_predictedTaken;
+    assign rename_predictedTarget = decode_predictedTarget;
+    assign rename_flagSet = decode_flagSet;
+    assign rename_branchReg = decode_branchReg;
 
 
 

@@ -18,12 +18,13 @@ module storeQueue (
 
     // Forwarding interface (load checks SQ for matching store)
     input logic fwd_req_valid,
-    input logic [63:0] fwd_req_addr,
+    input logic [63:0] fwd_req_addr, 
     output logic fwd_hit,
     output logic [63:0] fwd_data,
 
     // Commit - drains the head store to D-Cache
     input logic commit_valid,
+    input logic commit_accept,
     output logic commit_ready,        // oldest store has addr+data
     output logic [63:0] commit_addr,
     output logic [63:0] commit_data,
@@ -128,13 +129,13 @@ module storeQueue (
 
 
             // Commit: drain head to cache
-            if (commit_valid && commit_ready) begin
+            if (commit_valid && commit_ready && commit_accept) begin
                 entries[head].valid <= 1'b0;
                 head  <= head + 1;
                 count <= count - 1;
             end
 
-            if (dispatch_valid && !full && commit_valid && commit_ready)
+            if (dispatch_valid && !full && commit_valid && commit_ready && commit_accept)
                 count <= count;
         end
     end

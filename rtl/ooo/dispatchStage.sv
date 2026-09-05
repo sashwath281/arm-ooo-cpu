@@ -24,6 +24,11 @@ module dispatchStage (
     input logic rename_condBranch,
     input logic [63:0] rename_branchTarget,
     input logic rename_branch_cbz,
+    input logic rename_predictedTaken,
+    input logic [63:0] rename_predictedTarget,
+    input logic rename_flagSet,
+    input logic rename_branchReg,
+
 
     // Stall
     output logic stall,                         // from rename stage
@@ -57,6 +62,11 @@ module dispatchStage (
     output logic iq_condBranch,
     output logic [63:0] iq_branchTarget,
     output logic iq_branch_cbz,
+    output logic [63:0] iq_pc,
+    output logic iq_predictedTaken,
+    output logic [63:0] iq_predictedTarget,
+    output logic iq_flagSet,
+    output logic iq_branchReg,
 
     // To Store Queue (only for stores)
     output logic sq_dispatch_valid,             // is it a store?
@@ -68,13 +78,16 @@ module dispatchStage (
 
     // Checkpoint trigger (for branches)
     output logic checkpoint_valid,              // Trigger and ID for the RAT snapshot in the rename stage.
-    output logic [4:0] checkpoint_id);          // Fires on branches.
+    output logic [4:0] checkpoint_id,            // Fires on branches.
+
+    // Flush
+    input logic flush);
 
 
     
     logic can_dispatch;                         // Can we dispatch this cycle?
 
-    assign can_dispatch = rename_valid && !rob_full && !iq_full &&
+    assign can_dispatch = rename_valid && !flush && !rob_full && !iq_full &&
                           (!rename_store || !sq_full) &&
                           (!rename_load  || !lq_full);
 
@@ -108,6 +121,11 @@ module dispatchStage (
     assign iq_condBranch = rename_condBranch;
     assign iq_branchTarget = rename_branchTarget;
     assign iq_branch_cbz = rename_branch_cbz;
+    assign iq_pc = rename_pc;
+    assign iq_predictedTaken = rename_predictedTaken;
+    assign iq_predictedTarget = rename_predictedTarget;
+    assign iq_flagSet = rename_flagSet;
+    assign iq_branchReg = rename_branchReg;
 
 
     // Store Queue

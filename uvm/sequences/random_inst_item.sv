@@ -4,7 +4,7 @@
 // We find out how our DUT reacts to any instruction rather than specific ones we write. 
 class random_inst_item extends uvm_sequence_item;
 
-    `uvm_object_utils(random_instr_item)        // Register as object with UVM Factory
+    `uvm_object_utils(random_inst_item)        // Register as object with UVM Factory
 
     // A named set of possible instructions (for now, will change later)
     // The solver will pick one of these five named values randomly

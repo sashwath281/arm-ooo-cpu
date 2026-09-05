@@ -22,16 +22,14 @@ module freeList(clk, reset, provide_req, provide_reg_num, empty, old_reg, old_re
     assign provide_reg_num = fifo[head];        // the reg at the top of the fifo pool.
 
 
-    initial begin
-        for(int i = 0; i < 32; i++)
-            fifo[i] = 6'(i + 32);              // initialize the pool with X32-X63
-    end
-
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
             head <= 5'd0;                           // head points to 0 (start)
             tail <= 5'd0;                           // tail points to 0 (start)
             count <= 6'd32;                         // 32 physical regs left
+        
+            for(int i = 0; i < 32; i++)
+                fifo[i] = 6'(i + 32);              // initialize the pool with X32-X63
         end
 
         else begin

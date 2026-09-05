@@ -31,7 +31,7 @@ module mem_backend (
         if($value$plusargs("PROGRAM=%s", program_file))    // Built-in SV task
             $readmemb(program_file, mem);
         else
-            $readmemb("sw/tests/test01_AddiB.arm", mem);
+            $readmemb("sw/tests/test06_BlBr.arm", mem);
     end
 
 

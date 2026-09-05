@@ -15,8 +15,8 @@ module icache (clk, reset, pc, valid, instruction, ready, mem_req, mem_addr, mem
     // Memory side (to/from backend)
     output logic mem_req;
     output logic [63:0] mem_addr;
-    input  logic mem_resp_valid;
-    input  logic [255:0] mem_resp_data;
+    input logic mem_resp_valid;
+    input logic [255:0] mem_resp_data;
 
 
     // [63:12] tag (52 bits)
@@ -84,11 +84,12 @@ module icache (clk, reset, pc, valid, instruction, ready, mem_req, mem_addr, mem
     always_comb begin
         next_state = state;
         case (state)
-            IDLE:    if (valid && !cache_hit) next_state = REQUEST;
+            IDLE: if (valid && !cache_hit) next_state = REQUEST;
             REQUEST: next_state = WAIT;
-            WAIT:    if (mem_resp_valid)      next_state = FILL;
-            FILL:    next_state = REPLAY;
-            REPLAY:  next_state = IDLE;
+            WAIT: if (mem_resp_valid) next_state = FILL;
+            FILL: next_state = REPLAY;
+            REPLAY: next_state = IDLE;
+            
             default: next_state = IDLE;
         endcase
     end
@@ -107,8 +108,8 @@ module icache (clk, reset, pc, valid, instruction, ready, mem_req, mem_addr, mem
                 valid_array[i] <= 1'b0;
         end
         else if (state == FILL) begin
-            data_array[index]  <= mem_resp_data;
-            tag_array[index]   <= tag;
+            data_array[index] <= mem_resp_data;
+            tag_array[index] <= tag;
             valid_array[index] <= 1'b1;
         end
     end

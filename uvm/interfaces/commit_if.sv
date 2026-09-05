@@ -36,7 +36,7 @@ interface commit_if(input logic clk, input logic reset);
     // no X/Z bits, no Exceptions. chcekd every cycle (except during reset)
     property p_no_x_when_valid;
         @(posedge clk) disable iff (reset)
-        committedValid |-> (!$isunknown(committedArchReg) && !$unknown(committedData) && !$unknown(committedPC));
+        committedValid |-> (!$isunknown(committedArchReg) && !$isunknown(committedData) && !$isunknown(committedPC));
     endproperty
 
     a_no_x_when_valid: assert property (p_no_x_when_valid)
